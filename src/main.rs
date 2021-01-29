@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
+use std::option::Option;
 // use bytes::Bytes;
 // use byteorder::{BigEndian, ReadBytesExt};
 
@@ -57,15 +58,12 @@ impl FileObj<'_> {
 
     // reset file location
     fn seek(&mut self, to: usize, whence: u8) -> usize {
-        if whence == 0 {
-            self.loc = to
-        };
-        if whence == 1 {
-            self.loc += to
-        };
-        if whence == 2 {
-            self.loc = self.size - to
-        };
+        match whence {
+            0 => self.loc = to,
+            1 => self.loc += to,
+            2 => self.loc = self.size - to,
+            _ => println!("bad seek")
+        }
         self.loc
     }
 }
@@ -126,28 +124,25 @@ fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
             id += (byte & 0b11110000) >> 4;
         };
         typ = byte & 0b00001111;
-        if typ == 1 {
-            out.insert(id, AllTypes::Bool(true));
-        }
-        if typ == 1 {
-            out.insert(id, AllTypes::Bool(false));
-        }
-        if typ == 6 {
-            out.insert(
-                id,
-                AllTypes::I32(
-                    // file_obj.read(4).read_i32::<BigEndian>().unwrap()
-                    zigzag_int(read_unsigned_var_int(file_obj)),
+        match typ {
+            1 => out.insert(id, AllTypes::Bool(true)),
+            2 => out.insert(id, AllTypes::Bool(false)),
+            6 => out.insert(
+                     id,
+                     AllTypes::I32(
+                     // file_obj.read(4).read_i32::<BigEndian>().unwrap()
+                        zigzag_int(read_unsigned_var_int(file_obj)),
+                     ),
                 ),
-            );
-        }
-        if typ == 8 {
-            let len = read_unsigned_var_int(file_obj);
-            out.insert(
-                id,
-                AllTypes::Binary(Vec::<u8>::from(file_obj.read(len as usize))),
-            );
-        }
+            8 => {
+                let val = read_unsigned_var_int(file_obj);
+                out.insert(
+                    id,
+                    AllTypes::Binary(Vec::<u8>::from(file_obj.read(val as usize))),
+                )
+            },
+            _ => None
+        };
     }
     out
 }
