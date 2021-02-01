@@ -1,15 +1,13 @@
 use std::collections::HashMap;
+// use std::option::Option;
 use std::time::SystemTime;
-use std::option::Option;
 // use bytes::Bytes;
-// use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ReadBytesExt};
 
 fn main() {
+    // Simple benchmark for one Statistics blob from a fastparquet test case
     let data = b"\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00";
     let mut fo = FileObj::new(data);
-    let out = read_unsigned_var_int(&mut fo);
-    println!("{}", out);
-
     let mut out: HashMap<u8, AllTypes> = HashMap::new();
 
     let now = SystemTime::now();
@@ -27,6 +25,11 @@ fn main() {
     println!("{:?}", now.elapsed().unwrap().as_millis());
 }
 
+// The parquet spec has no MAP or UNION
+// (except ColumnOrder, which only has one field, which has no value;
+// this amounts to bool)
+
+// In memory byte buffer with file-like API
 struct FileObj<'a> {
     data: &'a [u8],
     loc: usize,
@@ -62,7 +65,7 @@ impl FileObj<'_> {
             0 => self.loc = to,
             1 => self.loc += to,
             2 => self.loc = self.size - to,
-            _ => println!("bad seek")
+            _ => println!("bad seek"),
         }
         self.loc
     }
@@ -91,6 +94,7 @@ fn zigzag_int(n: u64) -> i32 {
     (n as i32 >> 1) ^ -(n as i32 & 1)
 }
 
+/*
 fn long_zigzag(n: i64) -> u64 {
     ((n << 1) ^ (n >> 63)) as u64
 }
@@ -98,6 +102,7 @@ fn long_zigzag(n: i64) -> u64 {
 fn zigzag_long(n: u64) -> i64 {
     (n as i64 >> 1) ^ -(n as i64 & 1)
 }
+*/
 
 #[derive(Debug)]
 enum AllTypes {
@@ -118,30 +123,35 @@ fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
     loop {
         byte = file_obj.read_byte();
         if byte == 0 {
+            // stop field, end of struct
             break;
         };
         if byte & 0b11110000 > 0 {
-            id += (byte & 0b11110000) >> 4;
-        };
+            // short form: delta ID
+            id += (byte & 0b11110000) >> 4
+        } else {
+            // long form: absolute ID value
+            id = int_zigzag(file_obj.read(2).read_i16::<BigEndian>().unwrap() as i32) as u8
+        }
         typ = byte & 0b00001111;
         match typ {
             1 => out.insert(id, AllTypes::Bool(true)),
             2 => out.insert(id, AllTypes::Bool(false)),
             6 => out.insert(
-                     id,
-                     AllTypes::I32(
-                     // file_obj.read(4).read_i32::<BigEndian>().unwrap()
-                        zigzag_int(read_unsigned_var_int(file_obj)),
-                     ),
+                id,
+                AllTypes::I32(
+                    // file_obj.read(4).read_i32::<BigEndian>().unwrap()
+                    zigzag_int(read_unsigned_var_int(file_obj)),
                 ),
+            ),
             8 => {
                 let val = read_unsigned_var_int(file_obj);
                 out.insert(
                     id,
                     AllTypes::Binary(Vec::<u8>::from(file_obj.read(val as usize))),
                 )
-            },
-            _ => None
+            }
+            _ => None,
         };
     }
     out
