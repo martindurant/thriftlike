@@ -163,7 +163,7 @@ fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
     let mut byte: u8;
     let mut id: u8 = 0;
     let mut typ: u8;
-    let mut out: HashMap<u8, AllTypes> = HashMap::new();
+    let mut out: HashMap<u8, AllTypes> = HashMap::with_capacity(15);
     loop {
         byte = file_obj.read_byte();
         if byte == 0 {
@@ -221,7 +221,6 @@ fn read_bin(file_obj: &mut FileObj) -> Vec<u8> {
 fn read_list(file_obj: &mut FileObj) -> Vec<AllTypes> {
     let byte = file_obj.read_byte();
     let typ: u8 = byte & 0x0f;
-    let mut out: Vec<AllTypes> = Vec::new();
     let size: usize;
     if byte > 239 {
         // long form
@@ -230,13 +229,24 @@ fn read_list(file_obj: &mut FileObj) -> Vec<AllTypes> {
         // short form (up to 14 values)
         size = ((byte & 0xf0) >> 4) as usize;
     }
-    for _ in 0..size {
-        match typ {
-            5 => out.push(AllTypes::I32(zigzag_int(read_unsigned_var_int(file_obj)))),
-            8 => out.push(AllTypes::Binary(read_bin(file_obj))),
-            12 => out.push(AllTypes::Struct(read_struct(file_obj))),
-            _ => {}
+    let mut out: Vec<AllTypes> = Vec::with_capacity(size);
+    match typ {
+        5 => {
+            for _ in 0..size {
+                out.push(AllTypes::I32(zigzag_int(read_unsigned_var_int(file_obj))))
+            }
         }
+        8 => {
+            for _ in 0..size {
+                out.push(AllTypes::Binary(read_bin(file_obj)))
+            }
+        }
+        12 => {
+            for _ in 0..size {
+                out.push(AllTypes::Struct(read_struct(file_obj)))
+            }
+        }
+        _ => {}
     }
 
     out
