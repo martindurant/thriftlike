@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 // use bytes::Bytes;
 use byteorder::{BigEndian, ReadBytesExt};
+//use std::io::Cursor;
 
 fn main() {
     // Simple benchmark for one Statistics blob from a fastparquet test case
@@ -23,6 +24,19 @@ fn main() {
     println!("{:?}", out);
 
     println!("{:?}", now.elapsed().unwrap().as_millis());
+
+    let data = b"\x18Ncat=fred/catnum=1/part-r-00000-4805f816-a859-4b75-8659-285a6617386f.gz.parquet\x16\x08\x1c\x15\x045\x04\x16T\x16\x82\x06\x16\xc6\x02&\x08<\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00\x00\x00";
+    let mut fo = FileObj::new(data);
+
+    let now = SystemTime::now();
+    let n = 1000000;
+    for _ in 0..n {
+        fo.seek(0, 0);
+        out = read_struct(&mut fo);
+    }
+    println!("{:?}", out);
+
+    println!("{:?}", now.elapsed().unwrap().as_millis());
 }
 
 // The parquet spec has no MAP or UNION
@@ -31,7 +45,7 @@ fn main() {
 
 // In memory byte buffer with file-like API
 struct FileObj<'a> {
-    data: &'a [u8],
+    data: &'a [u8], // set in constructor, freed along with instance
     loc: usize,
     size: usize,
 }
@@ -65,7 +79,7 @@ impl FileObj<'_> {
             0 => self.loc = to,
             1 => self.loc += to,
             2 => self.loc = self.size - to,
-            _ => println!("bad seek"),
+            _ => panic!("bad seek"),
         }
         self.loc
     }
@@ -75,20 +89,26 @@ fn read_unsigned_var_int(file_obj: &mut FileObj) -> u64 {
     let mut result: u64 = 0;
     let mut shift: u8 = 0;
     let mut byte: u8;
+    byte = file_obj.read_byte();
+    if byte < 0x80 {
+        // short cut
+        return byte as u64;
+    }
     loop {
-        byte = file_obj.read_byte();
-        result |= ((byte & 0x7F) << shift) as u64;
+        result |= (byte as u64 & 0x7F) << shift;
         if (byte & 0x80) == 0 {
-            break;
+            return result;
         };
         shift += 7;
+        byte = file_obj.read_byte();
     }
-    result
 }
 
+/*
 fn int_zigzag(n: i32) -> u64 {
     ((n << 1) ^ (n >> 31)) as u64
 }
+*/
 
 fn zigzag_int(n: u64) -> i32 {
     (n as i32 >> 1) ^ -(n as i32 & 1)
@@ -98,11 +118,12 @@ fn zigzag_int(n: u64) -> i32 {
 fn long_zigzag(n: i64) -> u64 {
     ((n << 1) ^ (n >> 63)) as u64
 }
+*/
 
+#[inline]
 fn zigzag_long(n: u64) -> i64 {
     (n as i64 >> 1) ^ -(n as i64 & 1)
 }
-*/
 
 #[derive(Debug)]
 enum AllTypes {
@@ -112,7 +133,7 @@ enum AllTypes {
     Binary(Vec<u8>),
     Struct(HashMap<u8, AllTypes>),
     List(Vec<AllTypes>),
-    Map(HashMap<AllTypes, AllTypes>),
+    // Map(HashMap<AllTypes, AllTypes>),
 }
 
 fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
@@ -126,32 +147,44 @@ fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
             // stop field, end of struct
             break;
         };
-        if byte & 0b11110000 > 0 {
+        if byte & 0b11110000 == 0 {
+            // long form: absolute ID value
+            id = zigzag_int(file_obj.read(2).read_i16::<BigEndian>().unwrap() as u64) as u8
+        } else {
             // short form: delta ID
             id += (byte & 0b11110000) >> 4
-        } else {
-            // long form: absolute ID value
-            id = int_zigzag(file_obj.read(2).read_i16::<BigEndian>().unwrap() as i32) as u8
         }
         typ = byte & 0b00001111;
         match typ {
             1 => out.insert(id, AllTypes::Bool(true)),
             2 => out.insert(id, AllTypes::Bool(false)),
-            6 => out.insert(
+            5 => out.insert(
+                //int32
                 id,
-                AllTypes::I32(
-                    // file_obj.read(4).read_i32::<BigEndian>().unwrap()
-                    zigzag_int(read_unsigned_var_int(file_obj)),
-                ),
+                AllTypes::I32(zigzag_int(read_unsigned_var_int(file_obj))),
+            ),
+            6 => out.insert(
+                //int64
+                id,
+                AllTypes::I64(zigzag_long(read_unsigned_var_int(file_obj))),
             ),
             8 => {
+                // binary (string)
                 let val = read_unsigned_var_int(file_obj);
                 out.insert(
                     id,
                     AllTypes::Binary(Vec::<u8>::from(file_obj.read(val as usize))),
                 )
             }
-            _ => None,
+            12 => {
+                // struct - recurse
+                let val = read_struct(file_obj);
+                out.insert(id, AllTypes::Struct(val))
+            }
+            _ => {
+                println!("type: {}", typ);
+                None
+            }
         };
     }
     out

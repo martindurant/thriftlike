@@ -9,3 +9,7 @@ edition = "2018"
 [dependencies]
 # bytes = "1.0.1"
 byteorder = "1.4.2"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
