@@ -2,44 +2,61 @@ use std::collections::HashMap;
 // use std::option::Option;
 use std::time::SystemTime;
 // use bytes::Bytes;
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 //use std::io::Cursor;
 
 fn main() {
-    // Simple benchmark for one Statistics blob from a fastparquet test case
-    let data = b"\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00";
+    /*
+        // Simple benchmark for one Statistics blob from a fastparquet test case
+        let data = b"\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00";
+        let mut fo = FileObj::new(data);
+        let mut out: HashMap<u8, AllTypes> = HashMap::new();
+
+        let now = SystemTime::now();
+        let n = 1000000;
+        for _ in 0..n {
+            fo.seek(0, Whence::Start);
+            out = read_struct(&mut fo);
+        }
+        // python run: 6.96 µs (including making class)
+        // rust debug run: 3.914 µs (including text output)
+        // rust release run: 0.36 µs (including text output)
+
+        println!("{:?}", out);
+
+        println!("{:?}", now.elapsed().unwrap().as_millis());
+
+        let data = b"\x18Ncat=fred/catnum=1/part-r-00000-4805f816-a859-4b75-8659-285a6617386f.gz.parquet\x16\x08\x1c\x15\x045\x04\x16T\x16\x82\x06\x16\xc6\x02&\x08<\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00\x00\x00";
+        let mut fo = FileObj::new(data);
+
+            fo.seek(0, Whence::Start);
+            out = read_struct(&mut fo);
+        }
+        println!("{:?}", out);
+
+        println!("{:?}", now.elapsed().unwrap().as_millis());
+    // one column
+    let data = b"\x18Ncat=fred/catnum=1/part-r-00001-4805f816-a859-4b75-8659-285a6617386f.gz.parquet\x16\x08\x1c\x15\x04\x195\x00\x08\x06\x19\x18\x03num\x15\x04\x16T\x16\x82\x06\x16\xce\x02&\x08<\x18\x08\xf2\x01\x00\x00\x00\x00\x00\x00\x18\x08\xfc\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00\x00\x00";
     let mut fo = FileObj::new(data);
+    let out = read_struct(&mut fo);
+    println!("{:?}", out);
+    */
+
+    // full row group
+    let data = b"\x19\x1c\x18Ncat=fred/catnum=1/part-r-00000-4805f816-a859-4b75-8659-285a6617386f.gz.parquet\x16\x08\x1c\x15\x04\x195\x00\x08\x06\x19\x18\x03num\x15\x04\x16T\x16\x82\x06\x16\xc6\x02&\x08<\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00\x00\x00\x16\x82\x06\x16T\x00";
+    let mut fo = FileObj::new(data);
+    let now = SystemTime::now();
+    let n = 1000000;
     let mut out: HashMap<u8, AllTypes> = HashMap::new();
-
-    let now = SystemTime::now();
-    let n = 1000000;
     for _ in 0..n {
-        fo.seek(0, 0);
-        out = read_struct(&mut fo);
-    }
-    // python run: 6.96 µs (including making class)
-    // rust debug run: 3.914 µs (including text output)
-    // rust release run: 0.36 µs (including text output)
-
-    println!("{:?}", out);
-
-    println!("{:?}", now.elapsed().unwrap().as_millis());
-
-    let data = b"\x18Ncat=fred/catnum=1/part-r-00000-4805f816-a859-4b75-8659-285a6617386f.gz.parquet\x16\x08\x1c\x15\x045\x04\x16T\x16\x82\x06\x16\xc6\x02&\x08<\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00\x00\x00";
-    let mut fo = FileObj::new(data);
-
-    let now = SystemTime::now();
-    let n = 1000000;
-    for _ in 0..n {
-        fo.seek(0, 0);
+        fo.seek(0, Whence::Start);
         out = read_struct(&mut fo);
     }
     println!("{:?}", out);
-
     println!("{:?}", now.elapsed().unwrap().as_millis());
 }
 
-// The parquet spec has no MAP or UNION
+// The parquet spec has no BYTE, MAP or UNION
 // (except ColumnOrder, which only has one field, which has no value;
 // this amounts to bool)
 
@@ -48,6 +65,13 @@ struct FileObj<'a> {
     data: &'a [u8], // set in constructor, freed along with instance
     loc: usize,
     size: usize,
+}
+
+enum Whence {
+    // possible values for FileObj.seek()
+    Start = 0,
+    Relative = 1,
+    End = 2,
 }
 
 impl FileObj<'_> {
@@ -74,12 +98,11 @@ impl FileObj<'_> {
     }
 
     // reset file location
-    fn seek(&mut self, to: usize, whence: u8) -> usize {
+    fn seek(&mut self, to: usize, whence: Whence) -> usize {
         match whence {
-            0 => self.loc = to,
-            1 => self.loc += to,
-            2 => self.loc = self.size - to,
-            _ => panic!("bad seek"),
+            Whence::Start => self.loc = to,
+            Whence::Relative => self.loc += to,
+            Whence::End => self.loc = self.size - to,
         }
         self.loc
     }
@@ -130,10 +153,10 @@ enum AllTypes {
     Bool(bool),
     I64(i64),
     I32(i32),
+    F64(f64),
     Binary(Vec<u8>),
     Struct(HashMap<u8, AllTypes>),
     List(Vec<AllTypes>),
-    // Map(HashMap<AllTypes, AllTypes>),
 }
 
 fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
@@ -168,24 +191,53 @@ fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
                 id,
                 AllTypes::I64(zigzag_long(read_unsigned_var_int(file_obj))),
             ),
-            8 => {
+            7 => out.insert(
+                //float64
+                id,
+                AllTypes::F64(file_obj.read(2).read_f64::<LittleEndian>().unwrap()),
+            ),
+            8 => out.insert(
                 // binary (string)
-                let val = read_unsigned_var_int(file_obj);
-                out.insert(
-                    id,
-                    AllTypes::Binary(Vec::<u8>::from(file_obj.read(val as usize))),
-                )
-            }
-            12 => {
-                // struct - recurse
-                let val = read_struct(file_obj);
-                out.insert(id, AllTypes::Struct(val))
-            }
-            _ => {
-                println!("type: {}", typ);
-                None
-            }
+                id,
+                AllTypes::Binary(read_bin(file_obj)),
+            ),
+            9 => out.insert(id, AllTypes::List(read_list(file_obj))),
+            12 => out.insert(id, AllTypes::Struct(read_struct(file_obj))),
+            _ => None,
         };
     }
+    out
+}
+
+// read binary string
+#[inline]
+fn read_bin(file_obj: &mut FileObj) -> Vec<u8> {
+    let val = read_unsigned_var_int(file_obj);
+    Vec::<u8>::from(file_obj.read(val as usize))
+}
+
+// read list of whatever as a vec
+// only need list(struct), list(int32), list(byte-strings)
+fn read_list(file_obj: &mut FileObj) -> Vec<AllTypes> {
+    let byte = file_obj.read_byte();
+    let typ: u8 = byte & 0x0f;
+    let mut out: Vec<AllTypes> = Vec::new();
+    let size: usize;
+    if byte > 239 {
+        // long form
+        size = read_unsigned_var_int(file_obj) as usize;
+    } else {
+        // short form (up to 14 values)
+        size = ((byte & 0xf0) >> 4) as usize;
+    }
+    for _ in 0..size {
+        match typ {
+            5 => out.push(AllTypes::I32(zigzag_int(read_unsigned_var_int(file_obj)))),
+            8 => out.push(AllTypes::Binary(read_bin(file_obj))),
+            12 => out.push(AllTypes::Struct(read_struct(file_obj))),
+            _ => {}
+        }
+    }
+
     out
 }
