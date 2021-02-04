@@ -13,4 +13,14 @@ byteorder = "1.4.2"
 [profile.release]
 codegen-units = 1
 lto = "fat"
-# panic = "abort"
+ # panic = "abort"
+
+
+[lib]
+name = "thriftlike"
+crate-type = ["cdylib", "rlib"]
+
+
+[dependencies.pyo3]
+version = "0.13.1"
+features = ["extension-module"]
