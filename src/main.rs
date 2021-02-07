@@ -1,6 +1,7 @@
+#![allow(unused_imports)]
 use std::collections::HashMap;
 use std::time::SystemTime;
-use thriftlike::*;
+//use thriftlike::*;
 
 fn main() {
     /*
@@ -37,9 +38,9 @@ fn main() {
     let mut fo = FileObj::new(data);
     let out = read_struct(&mut fo);
     println!("{:?}", out);
-    */
 
     // full row group
+
     let data = b"\x19\x1c\x18Ncat=fred/catnum=1/part-r-00000-4805f816-a859-4b75-8659-285a6617386f.gz.parquet\x16\x08\x1c\x15\x04\x195\x00\x08\x06\x19\x18\x03num\x15\x04\x16T\x16\x82\x06\x16\xc6\x02&\x08<\x18\x08\xf6\x00\x00\x00\x00\x00\x00\x00\x18\x08\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x00\x00\x00\x16\x82\x06\x16T\x00";
     let mut fo = FileObj::new(data);
     let now = SystemTime::now();
@@ -51,4 +52,5 @@ fn main() {
     }
     println!("{:?}", out);
     println!("{:?}", now.elapsed().unwrap().as_millis());
+    */
 }

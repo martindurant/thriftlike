@@ -1,4 +1,9 @@
+#![allow(unused_variables)]
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use std::collections::HashMap;
+use std::error::Error;
 // use std::option::Option;
 // use bytes::Bytes;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
@@ -202,15 +207,63 @@ fn read_list(file_obj: &mut FileObj) -> Vec<AllTypes> {
     out
 }
 
+#[pyclass]
+struct ThriftData {
+    data: HashMap<u8, AllTypes>,
+}
+
+impl ThriftData {
+    // Rust-side way to get a value out
+    fn extract(&self, index: Vec<u8>) -> Option<&AllTypes> {
+        let mut part: &AllTypes = self.data.get(&index[0])?;
+        let mut i: usize = 0;
+
+        loop {
+            i += 1;
+            match part {
+                AllTypes::List(x) => part = &(x[*(index.get(i)?) as usize]),
+                AllTypes::Struct(x) => part = x.get(index.get(i)?)?,
+                _ => return Some(part),
+            }
+        }
+    }
+}
+
+#[pymethods]
+impl ThriftData {
+    fn __str__(&self) -> PyResult<String> {
+        PyResult::Ok(format!("{:?}", self.data).to_string())
+    }
+    fn __dir__(&self) -> PyResult<Vec<String>> {
+        PyResult::Ok(vec!["__str__".to_string(), "get_int".to_string()])
+    }
+    fn get_int(&self, index: Vec<u8>) -> PyResult<i64> {
+        let out = self.extract(index);
+        match out {
+            Some(x) => match x {
+                AllTypes::I32(y) => PyResult::Ok(*y as i64),
+                AllTypes::I64(y) => PyResult::Ok(*y),
+                _ => Err(pyo3::exceptions::PyTypeError::new_err("bad type")),
+            },
+            None => Err(pyo3::exceptions::PyIndexError::new_err("bad index")),
+        }
+    }
+
+    //fn get_int(&self, indices: Vec<u8>) -> PyResult<i64> {
+    //   indices.iter(i||)
+    //  PyResult::Ok(0)
+    //}
+}
+
 #[pymodule]
 fn thriftlike(py: Python, m: &PyModule) -> PyResult<()> {
     #[pyfn(m, "parse")]
-    fn parse_py(_py: Python, data: &[u8]) -> PyResult<bool> {
+    fn parse_py(_py: Python, data: &[u8]) -> PyResult<ThriftData> {
         let mut fo = FileObj::new(data);
         let out = read_struct(&mut fo);
-
-        Ok(true) //format!("{:?}", out))
+        let inst = ThriftData { data: out };
+        Ok(inst)
     }
-
+    m.add_class::<ThriftData>()?;
     Ok(())
 }
