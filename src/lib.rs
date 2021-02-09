@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use std::error::Error;
 // use std::option::Option;
 // use bytes::Bytes;
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use byteorder::{BigEndian as BE, LittleEndian as LE, ReadBytesExt};
 //use std::io::Cursor;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
+use std::time::SystemTime;
 
 // The parquet spec has no BYTE, MAP or UNION
 // (except ColumnOrder, which only has one field, which has no value;
@@ -127,35 +128,29 @@ pub fn read_struct(file_obj: &mut FileObj) -> HashMap<u8, AllTypes> {
         };
         if byte & 0b11110000 == 0 {
             // long form: absolute ID value
-            id = zigzag_int(file_obj.read(2).read_i16::<BigEndian>().unwrap() as u64) as u8
+            id = zigzag_int(file_obj.read(2).read_i16::<BE>().unwrap() as u64) as u8
         } else {
             // short form: delta ID
             id += (byte & 0b11110000) >> 4
         }
         typ = byte & 0b00001111;
         match typ {
+            // field types
             1 => out.insert(id, AllTypes::Bool(true)),
             2 => out.insert(id, AllTypes::Bool(false)),
             5 => out.insert(
-                //int32
                 id,
                 AllTypes::I32(zigzag_int(read_unsigned_var_int(file_obj))),
             ),
             6 => out.insert(
-                //int64
                 id,
                 AllTypes::I64(zigzag_long(read_unsigned_var_int(file_obj))),
             ),
             7 => out.insert(
-                //float64
                 id,
-                AllTypes::F64(file_obj.read(2).read_f64::<LittleEndian>().unwrap()),
+                AllTypes::F64(file_obj.read(2).read_f64::<LE>().unwrap()),
             ),
-            8 => out.insert(
-                // binary (string)
-                id,
-                AllTypes::Binary(read_bin(file_obj)),
-            ),
+            8 => out.insert(id, AllTypes::Binary(read_bin(file_obj))),
             9 => out.insert(id, AllTypes::List(read_list(file_obj))),
             12 => out.insert(id, AllTypes::Struct(read_struct(file_obj))),
             _ => None,
@@ -186,6 +181,7 @@ fn read_list(file_obj: &mut FileObj) -> Vec<AllTypes> {
     }
     let mut out: Vec<AllTypes> = Vec::with_capacity(size);
     match typ {
+        // list types
         5 => {
             for _ in 0..size {
                 out.push(AllTypes::I32(zigzag_int(read_unsigned_var_int(file_obj))))
@@ -214,7 +210,7 @@ struct ThriftData {
 
 impl ThriftData {
     // Rust-side way to get a value out
-    fn extract(&self, index: Vec<u8>) -> Option<&AllTypes> {
+    fn extract(&self, index: &Vec<u8>) -> Option<&AllTypes> {
         let mut part: &AllTypes = self.data.get(&index[0])?;
         let mut i: usize = 0;
 
@@ -234,11 +230,9 @@ impl ThriftData {
     fn __str__(&self) -> PyResult<String> {
         PyResult::Ok(format!("{:?}", self.data).to_string())
     }
-    fn __dir__(&self) -> PyResult<Vec<String>> {
-        PyResult::Ok(vec!["__str__".to_string(), "get_int".to_string()])
-    }
+
     fn get_int(&self, index: Vec<u8>) -> PyResult<i64> {
-        let out = self.extract(index);
+        let out = self.extract(&index);
         match out {
             Some(x) => match x {
                 AllTypes::I32(y) => PyResult::Ok(*y as i64),
@@ -249,10 +243,22 @@ impl ThriftData {
         }
     }
 
-    //fn get_int(&self, indices: Vec<u8>) -> PyResult<i64> {
-    //   indices.iter(i||)
-    //  PyResult::Ok(0)
-    //}
+    fn get_int_timeit(&self, index: Vec<u8>, n: i32) -> PyResult<i64> {
+        let now = SystemTime::now();
+        let mut out: Option<&AllTypes> = None;
+        for _ in 0..n {
+            out = self.extract(&index);
+        }
+        println!("{:?}", now.elapsed().unwrap().as_millis());
+        match out {
+            Some(x) => match x {
+                AllTypes::I32(y) => PyResult::Ok(*y as i64),
+                AllTypes::I64(y) => PyResult::Ok(*y),
+                _ => Err(pyo3::exceptions::PyTypeError::new_err("bad type")),
+            },
+            None => Err(pyo3::exceptions::PyIndexError::new_err("bad index")),
+        }
+    }
 }
 
 #[pymodule]
